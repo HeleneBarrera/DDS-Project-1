@@ -1,0 +1,293 @@
+---
+title: "Project 1 Code"
+author: "Helene Barrera"
+date: "10/1/2020"
+output:
+  html_document: default
+  pdf_document: default
+Version: R version 4.0.3
+Updated: R version updated 10/10/2020
+---
+
+```{r}
+#read in data
+beer = read.csv("D:/MS in Data Science/Datasets/Beers.csv", header = T)
+brew = read.csv("D:/MS in Data Science/Datasets/Breweries.csv", header = T)
+
+#load needed libraries
+library(plyr)
+library(tidyverse)
+library(dplyr)
+library(formattable)
+library(mice)
+library(lattice)
+library(pan)
+library(ggplot2)
+library(scales)
+library(ggthemes)
+library(knitr)
+library(stringr)
+library(class)
+library(caret)
+library(e1071)
+library(janitor)
+library(highcharter)
+library(leaflet)
+
+#convert data to data frame
+beer = as.data.frame(beer)
+brew = as.data.frame(brew)
+
+#look at how many na values are in the ABV and IBU columns
+beer_na_ABV <- sum(is.na(beer$ABV))
+beer_na_IBU <- sum(is.na(beer$IBU))
+beer_na_ABV
+beer_na_IBU
+
+beer$Style <- as.factor(beer$Style)
+brew$State <- as.factor(brew$State) 
+levels(beer$Style)
+str(brew)
+```
+
+
+#1.How many breweries are present in each state?
+```{r}
+##Take a count of breweries per state, change table headers and format into a nicer looking table
+brew_st_table = as.data.frame(table(brew$State))
+colnames(brew_st_table) <- c("State", "Frequency")
+formattable(brew_st_table)
+write.csv(brew_st_table, file = "D:/MS in Data Science/Doing Data Science/Project 1/Question 1 Chart.csv")
+
+```
+
+
+#2.Merge beer data with the breweries data.
+```{r}
+##change column name of key beer df to match key of brew df, then join dfs. Edit new col names for clarity.
+colnames(beer)[5] <- "Brew_ID"
+final <- inner_join(beer,brew,by = "Brew_ID")
+colnames(final)[1] <- "Beer_Name"
+colnames(final)[8] <- "Brewery_Name"
+final <- as.data.frame(final)
+final$Ounces <- as.factor(final$Ounces)
+
+##Print the first and last 6 rows
+
+final_first = head(final,6)
+final_last = tail(final,6)
+first_last = rbind(final_first,final_last) 
+formattable(first_last)
+```
+
+
+#3.Address the missing values in each column.
+```{r}
+##look at the missing variable
+ini <- mice(final, maxit = 0)
+##this shows 8 complete variables, 1 missing 62 values and 1005 values
+table(ini$nmis) 
+
+##Decide to impute the data
+##show which variables will be predictors for each missing variable
+inlist <- c("ABV","IBU", "Style")
+##run prediction matrix
+pred <- quickpred(final, minpuc = 0.5, include = inlist)
+##Leave out certain predictors
+pred[, c("Beer_Name")]=0
+pred[, c("Beer_ID")]=0
+pred[, c("Brewery_Name")]=0
+pred
+##run the imputation
+imp <- mice(final, maxit = 5, predictorMatrix = pred, seed = 1234)
+##merge          
+imp_final <- complete(imp)           
+##make sure there's no missing values
+final_na_ABV <- sum(is.na(imp_final$ABV))
+final_na_IBU <- sum(is.na(imp_final$IBU))
+final_na_ABV
+final_na_IBU
+##Found later in the analysis that Scotty K NA from Uncommon Brewers is marketed as a "Low Alcohol Beer" and has a very low ABV. 
+##This is removed from the unimputed data since it doesn't have the IBU value. 
+##It would be best to remove it from the imputed data as well, since it is it's own category,
+##it is a huge outlier that will skew the data, and it is not relevant to what we're looking at.
+which.min(imp_final$ABV)  
+imp_final[2267,]
+imp_final <- imp_final[-c(2267),]
+
+##compare original first/last chart to new one
+imp_final_first = head(imp_final,6)
+imp_final_last = tail(imp_final,6)
+imp_first_last = rbind(imp_final_first,imp_final_last) 
+formattable(imp_first_last)
+
+##Convert ABV to percent, since that's how most people are used to seeing it.
+imp_final$ABV <- imp_final$ABV*100
+```
+
+#4.Compute the median alcohol content and international bitterness unit for each state. Plot a bar chart to compare.
+```{r}
+med_ABV <- aggregate(imp_final$ABV, by=list(imp_final$State), FUN = median) 
+med_ABV <- as.data.frame(med_ABV)
+med_ABV$Group.1 <- as.factor(med_ABV$Group.1)
+
+##Plot it.
+med_ABV %>% ggplot(aes(x=Group.1, y=x, )) + geom_bar(stat = 'identity') + 
+  ggtitle("Median Alcohol by Volume (ABV) of Beers by State") + theme_few()+
+  ylab("ABV %") + xlab("State") + ylim(0, 10) + coord_flip() + 
+  scale_x_discrete(limits = rev(levels(med_ABV$Group.1)))
+
+##Same for IBU  
+med_IBU <- aggregate(imp_final$IBU, by=list(imp_final$State), FUN = median)
+med_IBU <- as.data.frame(med_IBU)
+med_IBU$Group.1 <- as.factor(med_IBU$Group.1)
+  
+med_IBU %>% ggplot(aes(x=Group.1, y=x)) + geom_bar(stat = 'identity') + theme_few() +
+  ggtitle("Median International Bitterness Units (IBU) of Beers by State") + xlab("IBU") + ylab("State") +
+  ylim(0, 80) + coord_flip() + scale_x_discrete(limits = rev(levels(med_ABV$Group.1)))
+  
+##do this for unimputed data also 
+final <- na.omit(final)
+ui_med_ABV <- aggregate(final$ABV, by=list(final$State), FUN = median) 
+ui_med_ABV <- as.data.frame(ui_med_ABV)
+ui_med_ABV$Group.1 <- as.factor(ui_med_ABV$Group.1)  
+
+ui_med_IBU <- aggregate(final$IBU, by=list(final$State), FUN = median)
+ui_med_IBU <- as.data.frame(ui_med_IBU)
+ui_med_IBU$Group.1 <- as.factor(ui_med_IBU$Group.1)
+```  
+  
+#5.Which state has the maximum alcoholic (ABV) beer? Which state has the most bitter (IBU) beer?
+```{r}
+which.max(med_ABV$x)
+which.min(med_IBU$x)
+##Returned row 9, which is Delaware.
+which.max(med_IBU$x)
+##Returned row 9, which is also Delaware.
+##Compare to unimputed data. Maine is the max ABV and IBU.
+which.max(ui_med_ABV$x)
+which.max(ui_med_IBU$x)  
+```
+ 
+#6.Comment on the summary statistics and distribution of the ABV variable.   
+```{r}
+summary(imp_final$ABV)
+##Which is the lowest and highest ABV?
+which.max(imp_final$ABV)
+which.min(imp_final$ABV)
+imp_final[2279,]
+imp_final[770,]
+
+
+##Histogram
+imp_final %>% ggplot(aes(x = ABV)) + geom_histogram(bins = 20, color = 'black', fill = '#1e7b1e') +
+              ggtitle("Histogram of ABV%") + xlab("Distribution of ABV") + theme_few()
+
+##same for unimputed  
+final$ABV <- final$ABV*100  
+summary(final$ABV)
+final %>% ggplot(aes(x = ABV)) + geom_histogram(bins = 20, color = 'black') +
+              ggtitle("Unimputed Histogram of ABV%") + xlab("Distribution of ABV") + theme_few()
+```
+
+#7. Is there an apparent relationship between the bitterness of the beer and its alcoholic content? (Scatterplot)   
+```{r}
+imp_final %>% ggplot(aes(x = ABV, y = IBU)) + geom_point(color = '#1e7b1e') + geom_smooth(method = lm, formula = y ~ x) +
+              ggtitle("ABV % by IBU") + xlab("ABV %") + ylab("IBU") + theme_few()
+              
+##Compare to unimputed data
+final %>% ggplot(aes(x = ABV, y = IBU)) + geom_point() + theme_few() +
+          ggtitle("ABV % by IBU (non-imputed)") + xlab("ABV %") + ylab("IBU")
+```
+
+#8. Compare IPAs to other types of ale. 
+```{r}
+##Look at how all factors of Style are entered.
+view(levels(imp_final$Style))
+
+##Pull out all data with the word "Ale" or "IPA".
+temp_Ales <- imp_final
+Ales <- temp_Ales %>% filter(str_detect(Style, "(Ale|IPA)")) %>% droplevels()
+view(levels(Ales$Style))
+
+##Sort into only 2 factor levels - IPA and Ale.
+IPAvALE <- NA
+Ales <- cbind(Ales, IPAvALE)
+
+for (i in 1:nrow(Ales)) 
+{
+  if (is.na(str_match(Ales[i,6], "IPA")))
+  {
+    Ales[i,11] <- "Ale"  
+  }
+  else
+  {
+    Ales[i,11] <- "IPA"
+  }
+}
+Ales$Style <- as.factor(Ales$IPAvALE)
+
+view(Ales)
+
+#Scatterplot of IPA vs Ale
+Ales %>% ggplot(aes(x=ABV, y=IBU, color = IPAvALE)) + geom_point(stat = 'identity') +
+          theme_few() + ggtitle("Comparison of IPAs vs Ales") +
+          scale_color_manual(values = c('#1e7b1e','#d99617'))
+
+##Standardize scales
+std_Ales <- Ales
+std_Ales$std_ABV = scale(Ales$ABV)
+std_Ales$std_IBU = scale(Ales$IBU)
+
+
+##Make a KNN loop
+set.seed(1)
+splitPerc = .7
+
+iterations = 100
+numk = 50
+
+masterAcc = matrix(nrow = iterations, ncol = numk)
+
+for(j in 1:iterations)
+{
+accs = data.frame(accuracy = numeric(50), k = numeric(50))
+trainIndices = sample(1:dim(std_Ales)[1], round(splitPerc * dim(std_Ales)[1]))
+trainAles = std_Ales[trainIndices,]
+testAles = std_Ales[-trainIndices,]
+for(i in 1:numk)
+{
+  classifications = knn(trainAles[,c(12,13)],testAles[,c(12,13)],trainAles$IPAvALE, prob = TRUE, k = i)
+  table(classifications,testAles$IPAvALE)
+  CM = confusionMatrix(table(classifications,testAles$IPAvALE))
+  masterAcc[j,i] = CM$overall[1] 
+}
+}
+
+MeanAcc = colMeans(masterAcc)
+plot(seq(1,numk,1),MeanAcc, type = "l")
+
+which.max(MeanAcc)
+
+##Use k=40 for confusion matrix
+
+classifications = knn(trainAles[,c(12,13)],testAles[,c(12,13)],trainAles$IPAvALE, prob = TRUE, k = 40)
+  table(classifications,testAles$IPAvALE)
+  CM = confusionMatrix(table(classifications,testAles$IPAvALE))
+  CM
+```
+#9. One other useful inference
+```{r}
+
+state_brews <- tabyl(Ales, State, IPAvALE)
+state_brews$Percent = 100*(state_brews$Ale/(state_brews$Ale + state_brews$IPA))
+state_brews <- as.data.frame(state_brews)
+state_brews$Percent <- round(state_brews$Percent)
+
+IPA <- Ales %>% filter(IPAvALE == "IPA")
+Ale <- Ales %>% filter(IPAvALE == "Ale")
+summary(IPA$ABV)
+summary(IPA$IBU)
+summary(Ale$ABV)
+summary(Ale$IBU)
+```
